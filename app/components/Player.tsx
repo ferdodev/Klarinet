@@ -17,10 +17,15 @@ interface PlayerProps {
   currentTrack: Track | null;
   queue: Track[];
   onTrackChange: (track: Track) => void;
+  onTrackError: (track: Track) => void;
+  onTrackReady: (track: Track) => void;
+  favoriteTracks: Track[];
+  onToggleFavorite: (track: Track) => void;
 }
 
-export default function Player({ currentTrack, queue, onTrackChange }: PlayerProps) {
+export default function Player({ currentTrack, queue, onTrackChange, onTrackError, onTrackReady, favoriteTracks, onToggleFavorite }: PlayerProps) {
   const playerRef = useRef<ReactPlayer | null>(null);
+  const pendingRemovalRef = useRef<Track | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [played, setPlayed] = useState(0); // 0-1 fraction
   const [playedSeconds, setPlayedSeconds] = useState(0);
@@ -29,6 +34,10 @@ export default function Player({ currentTrack, queue, onTrackChange }: PlayerPro
   const [isMuted, setIsMuted] = useState(false);
   const [isSeeking, setIsSeeking] = useState(false);
   const [isReady, setIsReady] = useState(false);
+
+  const isFavorite = currentTrack
+    ? favoriteTracks.some((t) => t.id === currentTrack.id)
+    : false;
 
   const currentIndex = currentTrack
     ? queue.findIndex((t) => t.id === currentTrack.id)
@@ -81,7 +90,14 @@ export default function Player({ currentTrack, queue, onTrackChange }: PlayerPro
 
   const handleReady = useCallback(() => {
     setIsReady(true);
-  }, []);
+    // Si había un track con error pendiente de eliminar, eliminarlo ahora que el siguiente está listo
+    if (pendingRemovalRef.current) {
+      onTrackError(pendingRemovalRef.current);
+      pendingRemovalRef.current = null;
+    }
+    // Notificar que esta canción cargó correctamente
+    if (currentTrack) onTrackReady(currentTrack);
+  }, [onTrackError, onTrackReady, currentTrack]);
 
   const handleEnded = useCallback(() => {
     if (hasNext) {
@@ -103,6 +119,19 @@ export default function Player({ currentTrack, queue, onTrackChange }: PlayerPro
 
   const handleSeekMouseUp = useCallback(
     (e: React.MouseEvent<HTMLInputElement>) => {
+      setIsSeeking(false);
+      const value = parseFloat((e.target as HTMLInputElement).value);
+      playerRef.current?.seekTo(value, "fraction");
+    },
+    []
+  );
+
+  const handleSeekTouchStart = useCallback(() => {
+    setIsSeeking(true);
+  }, []);
+
+  const handleSeekTouchEnd = useCallback(
+    (e: React.TouchEvent<HTMLInputElement>) => {
       setIsSeeking(false);
       const value = parseFloat((e.target as HTMLInputElement).value);
       playerRef.current?.seekTo(value, "fraction");
@@ -141,7 +170,18 @@ export default function Player({ currentTrack, queue, onTrackChange }: PlayerPro
             onDuration={handleDuration}
             onReady={handleReady}
             onEnded={handleEnded}
-            onError={(e) => console.error("ReactPlayer error:", e)}
+            onError={(e) => {
+              console.warn("ReactPlayer error:", e);
+              if (hasNext) {
+                // Guardar para eliminar cuando el siguiente track esté listo
+                pendingRemovalRef.current = currentTrack;
+                playNext();
+              } else {
+                // Sin siguiente, eliminar inmediatamente
+                if (currentTrack) onTrackError(currentTrack);
+                setIsPlaying(false);
+              }
+            }}
             width="0"
             height="0"
             config={{
@@ -288,12 +328,28 @@ export default function Player({ currentTrack, queue, onTrackChange }: PlayerPro
 
       {/* ===== Mobile mini-player (<768px) ===== */}
       <div className="md:hidden fixed left-0 right-0 z-20" style={{ bottom: "var(--bottom-nav-height)" }}>
-        {/* Progress bar ultra-thin on top */}
+        {/* Progress bar interactiva — área táctil amplia */}
         {currentTrack && (
-          <div className="h-0.5 bg-border w-full">
-            <div
-              className="h-full bg-accent transition-all duration-300"
-              style={{ width: `${played * 100}%` }}
+          <div className="relative w-full h-5 flex items-center bg-transparent">
+            {/* Track visual */}
+            <div className="absolute left-0 right-0 bottom-0 h-1 bg-border rounded-full overflow-hidden pointer-events-none">
+              <div
+                className="h-full bg-accent transition-none"
+                style={{ width: `${played * 100}%` }}
+              />
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={0.999999}
+              step="any"
+              value={played}
+              onTouchStart={handleSeekTouchStart}
+              onChange={handleSeekChange}
+              onTouchEnd={handleSeekTouchEnd}
+              onMouseDown={handleSeekMouseDown}
+              onMouseUp={handleSeekMouseUp}
+              className="absolute inset-0 w-full opacity-0 cursor-pointer h-full"
             />
           </div>
         )}
@@ -327,6 +383,18 @@ export default function Player({ currentTrack, queue, onTrackChange }: PlayerPro
 
               {/* Controls */}
               <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  onClick={() => onToggleFavorite(currentTrack)}
+                  className="w-9 h-9 flex items-center justify-center cursor-pointer"
+                >
+                  <svg width="20" height="20" viewBox="0 0 24 24"
+                    fill={isFavorite ? "var(--klarinet-accent)" : "none"}
+                    stroke={isFavorite ? "var(--klarinet-accent)" : "currentColor"}
+                    strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                  >
+                    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+                  </svg>
+                </button>
                 <button
                   onClick={() => setIsPlaying(!isPlaying)}
                   className="w-9 h-9 flex items-center justify-center cursor-pointer text-foreground"

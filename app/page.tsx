@@ -100,6 +100,8 @@ export default function Home() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SearchResultItem[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [isLoadingRelated, setIsLoadingRelated] = useState(false);
+  const [isSongSearch, setIsSongSearch] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [favoriteTracks, setFavoriteTracks] = useState<Track[]>([]);
   const [recentlyPlayed, setRecentlyPlayed] = useState<Track[]>([]);
@@ -112,6 +114,10 @@ export default function Home() {
 
   // Ref para evitar duplicar el guardado de historial
   const lastHistoryTrackId = useRef<string | null>(null);
+  // Ref para controlar si ya se cargaron canciones relacionadas en esta sesión de búsqueda
+  const relatedFetchedRef = useRef(false);
+  // Ref para indicar que la siguiente canción exitosa debe disparar el fetch de similares
+  const needsRelatedFetchRef = useRef(false);
 
   // Cargar favoritos e historial desde localStorage al montar
   useEffect(() => {
@@ -226,13 +232,26 @@ export default function Home() {
     setActiveSection("search");
     setIsSearching(true);
     setSearchError(null);
+    relatedFetchedRef.current = false;
 
     try {
       const res = await fetch(`/api/search?q=${encodeURIComponent(query)}`);
       const data = await res.json();
 
       if (data.status === "success" && Array.isArray(data.result)) {
-        setSearchResults(data.result);
+        const results: SearchResultItem[] = data.result;
+        setSearchResults(results);
+
+        const queryLower = query.toLowerCase();
+        // Artista: mayoría de uploaders coinciden con la query
+        const artistMatches = results.filter((r) =>
+          r.uploader.username.toLowerCase().includes(queryLower) ||
+          queryLower.includes(r.uploader.username.toLowerCase())
+        );
+        const detectedArtist = results.length > 0 && artistMatches.length > results.length / 2;
+        // Canción: la query aparece en algún título (y no es búsqueda de artista)
+        const titleMatches = results.filter((r) => r.title.toLowerCase().includes(queryLower));
+        setIsSongSearch(!detectedArtist && titleMatches.length > 0);
       } else {
         setSearchResults([]);
         setSearchError(data.message || "No se pudieron obtener resultados");
@@ -245,12 +264,52 @@ export default function Home() {
     }
   }, []);
 
+  const fetchRelated = useCallback((track: Track) => {
+    if (isLoadingRelated) return;
+    relatedFetchedRef.current = true;
+    setIsLoadingRelated(true);
+    fetch("/api/related", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: track.title, artist: track.artist, searchQuery }),
+    })
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data.results) && data.results.length > 0) {
+          const related = data.results as SearchResultItem[];
+          setSearchResults((prev) => {
+            const ids = new Set(prev.map((r) => r.ID));
+            const fresh = related.filter((r) => !ids.has(r.ID));
+            return [...prev, ...fresh];
+          });
+          setQueue((prev) => {
+            const ids = new Set(prev.map((t) => t.id));
+            const freshTracks = searchResultsToTracks(related).filter((t) => !ids.has(t.id));
+            return [...prev, ...freshTracks];
+          });
+        }
+      })
+      .catch(() => {})
+      .finally(() => setIsLoadingRelated(false));
+  }, [isLoadingRelated, searchQuery]);
+
   const handlePlayTrack = useCallback((track: Track) => {
     setCurrentTrack(track);
-    // Construir la cola a partir de los resultados de búsqueda actuales
-    const tracks = searchResultsToTracks(searchResults);
-    setQueue(tracks);
-  }, [searchResults]);
+    setQueue(searchResultsToTracks(searchResults));
+
+    const isLastInList = searchResults[searchResults.length - 1]?.ID === track.id;
+    const shouldFetch = isLastInList || (isSongSearch && !relatedFetchedRef.current);
+
+    if (!shouldFetch) return;
+
+    // Solo limpiar la lista en la primera vez Y cuando NO es la última canción
+    if (!relatedFetchedRef.current && !isLastInList) {
+      const asResult = searchResults.find((r) => r.ID === track.id);
+      if (asResult) setSearchResults([asResult]);
+    }
+
+    fetchRelated(track);
+  }, [searchResults, isSongSearch, fetchRelated]);
 
   const handleHomePlayTrack = useCallback((track: Track, trackList?: Track[]) => {
     setCurrentTrack(track);
@@ -271,12 +330,36 @@ export default function Home() {
 
   const handleTrackChange = useCallback((track: Track) => {
     setCurrentTrack(track);
-  }, []);
+    // Si el reproductor llegó automáticamente a la última canción, buscar más similares
+    setQueue((prev) => {
+      if (prev[prev.length - 1]?.id === track.id) {
+        fetchRelated(track);
+      }
+      return prev;
+    });
+  }, [fetchRelated]);
 
   const handleOnboardingComplete = useCallback((genres: string[]) => {
     setShowOnboarding(false);
     void genres;
   }, []);
+
+  const handleTrackError = useCallback((track: Track) => {
+    setSearchResults((prev) => prev.filter((r) => r.ID !== track.id));
+    setQueue((prev) => prev.filter((t) => t.id !== track.id));
+    // Si aún no hubo un fetch exitoso de similares, marcar que la próxima canción exitosa lo dispare
+    if (!relatedFetchedRef.current) {
+      needsRelatedFetchRef.current = true;
+    }
+  }, []);
+
+  const handleTrackReady = useCallback((track: Track) => {
+    if (needsRelatedFetchRef.current) {
+      needsRelatedFetchRef.current = false;
+      relatedFetchedRef.current = false; // resetear para que fetchRelated no lo bloquee
+      fetchRelated(track);
+    }
+  }, [fetchRelated]);
 
   // ---- Playlist handlers ----
   const handleCreatePlaylist = useCallback((name: string) => {
@@ -342,6 +425,7 @@ export default function Home() {
             query={searchQuery}
             results={searchResults}
             isLoading={isSearching}
+            isLoadingRelated={isLoadingRelated}
             error={searchError}
             onPlayTrack={handlePlayTrack}
             currentTrackId={currentTrack?.id ?? null}
@@ -440,7 +524,7 @@ export default function Home() {
       <MainContent onSearch={handleSearch} themeMode={themeMode} onThemeToggle={toggleTheme}>
         {renderContent()}
       </MainContent>
-      <Player currentTrack={currentTrack} queue={queue} onTrackChange={handleTrackChange} />
+      <Player currentTrack={currentTrack} queue={queue} onTrackChange={handleTrackChange} onTrackError={handleTrackError} onTrackReady={handleTrackReady} favoriteTracks={favoriteTracks} onToggleFavorite={handleToggleFavorite} />
 
       {/* Playlist Modals */}
       <CreatePlaylistModal

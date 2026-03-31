@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, type FormEvent } from "react";
+import { useState, useEffect, useRef, useCallback, type FormEvent } from "react";
 import type { SearchResultItem } from "../types/api";
 import type { Track } from "./Player";
 
@@ -13,6 +13,7 @@ interface SearchResultsProps {
   query: string;
   results: SearchResultItem[];
   isLoading: boolean;
+  isLoadingRelated: boolean;
   error: string | null;
   onPlayTrack: (track: Track) => void;
   currentTrackId: string | null;
@@ -27,6 +28,7 @@ export default function SearchResults({
   query,
   results,
   isLoading,
+  isLoadingRelated,
   error,
   onPlayTrack,
   currentTrackId,
@@ -36,7 +38,19 @@ export default function SearchResults({
   recentlyPlayed,
   onAddToPlaylist,
 }: SearchResultsProps) {
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+
   const isFavorite = (id: string) => favoriteTracks.some((t) => t.id === id);
+
+  const toTrack = useCallback((item: SearchResultItem): Track => ({
+    title: item.title,
+    artist: item.uploader.username,
+    thumbnail: item.thumbnail_src,
+    duration: item.duration,
+    url: item.url,
+    id: item.ID,
+  }), []);
+
   const handlePlay = (item: SearchResultItem) => {
     const track: Track = {
       title: item.title,
@@ -122,6 +136,7 @@ export default function SearchResults({
       {/* Lista de resultados */}
       {!isLoading && results.length > 0 && (
         <div className="space-y-1">
+
           {/* Header de la tabla */}
           <div className="hidden md:grid grid-cols-[40px_36px_36px_120px_100px_80px] gap-4 px-4 py-2 text-xs text-text-tertiary uppercase tracking-wider border-b border-border mb-2">
             <span>#</span>
@@ -134,124 +149,147 @@ export default function SearchResults({
 
           {results.map((item, index) => {
             const isCurrentTrack = currentTrackId === item.ID;
+            const track = toTrack(item);
 
             return (
-              <button
-                key={item.ID}
-                onClick={() => handlePlay(item)}
-                className={`w-full grid grid-cols-[32px_32px_auto] md:grid-cols-[40px_36px_36px_120px_100px_80px] gap-2 md:gap-4 px-3 md:px-4 py-2 md:py-2.5 rounded-lg text-left transition-colors group cursor-pointer ${
-                  isCurrentTrack
-                    ? "bg-accent/15 text-accent"
-                    : "hover:bg-hover"
-                }`}
-              >
-                {/* Número / Play icon */}
-                <span className="hidden md:flex items-center justify-center">
-                  <span className="group-hover:hidden text-sm text-text-tertiary tabular-nums">
-                    {isCurrentTrack ? (
-                      <EqualizerIcon />
+              <div key={item.ID} className="relative">
+                <button
+                  onClick={() => handlePlay(item)}
+                  className={`w-full grid grid-cols-[auto_36px] md:grid-cols-[40px_36px_36px_120px_100px_80px] gap-2 md:gap-4 px-3 md:px-4 py-2 md:py-2.5 rounded-lg text-left transition-colors group cursor-pointer ${
+                    isCurrentTrack ? "bg-accent/15 text-accent" : "hover:bg-hover"
+                  }`}
+                >
+                  {/* Número / Play icon — solo desktop */}
+                  <span className="hidden md:flex items-center justify-center">
+                    <span className="group-hover:hidden text-sm text-text-tertiary tabular-nums">
+                      {isCurrentTrack ? <EqualizerIcon /> : index + 1}
+                    </span>
+                    <span className="hidden group-hover:block text-foreground">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                        <polygon points="6,3 20,12 6,21" />
+                      </svg>
+                    </span>
+                  </span>
+
+                  {/* Corazón — solo desktop */}
+                  <span
+                    className="hidden md:flex items-center justify-center"
+                    onClick={(e) => { e.stopPropagation(); onToggleFavorite(track); }}
+                  >
+                    {isFavorite(item.ID) ? (
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="var(--klarinet-accent)" className="transition-transform hover:scale-110 flex-shrink-0">
+                        <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                      </svg>
                     ) : (
-                      index + 1
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--klarinet-text-tertiary)" strokeWidth="2" className="transition-all hover:stroke-accent hover:scale-110 flex-shrink-0">
+                        <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
+                      </svg>
                     )}
                   </span>
-                  <span className="hidden group-hover:block text-foreground">
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                    >
-                      <polygon points="6,3 20,12 6,21" />
+
+                  {/* Agregar a playlist — solo desktop */}
+                  <span
+                    className="hidden md:flex items-center justify-center"
+                    onClick={(e) => { e.stopPropagation(); onAddToPlaylist(track); }}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--klarinet-text-tertiary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="transition-all hover:stroke-accent hover:scale-110 flex-shrink-0">
+                      <line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><line x1="3" y1="6" x2="3.01" y2="6" /><line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" />
                     </svg>
                   </span>
-                </span>
 
-                {/* Corazón favorito */}
-                <span
-                  className="flex items-center justify-center"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    const track: Track = {
-                      title: item.title,
-                      artist: item.uploader.username,
-                      thumbnail: item.thumbnail_src,
-                      duration: item.duration,
-                      url: item.url,
-                      id: item.ID,
-                    };
-                    onToggleFavorite(track);
-                  }}
-                >
-                  {isFavorite(item.ID) ? (
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="var(--klarinet-accent)" className="transition-transform hover:scale-110 flex-shrink-0">
-                      <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
-                    </svg>
-                  ) : (
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--klarinet-text-tertiary)" strokeWidth="2" className="transition-all hover:stroke-accent hover:scale-110 flex-shrink-0">
-                      <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" />
-                    </svg>
-                  )}
-                </span>
-
-                {/* Agregar a playlist */}
-                <span
-                  className="flex items-center justify-center"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    const track: Track = {
-                      title: item.title,
-                      artist: item.uploader.username,
-                      thumbnail: item.thumbnail_src,
-                      duration: item.duration,
-                      url: item.url,
-                      id: item.ID,
-                    };
-                    onAddToPlaylist(track);
-                  }}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--klarinet-text-tertiary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="transition-all hover:stroke-accent hover:scale-110 flex-shrink-0">
-                    <line x1="8" y1="6" x2="21" y2="6" /><line x1="8" y1="12" x2="21" y2="12" /><line x1="8" y1="18" x2="21" y2="18" /><line x1="3" y1="6" x2="3.01" y2="6" /><line x1="3" y1="12" x2="3.01" y2="12" /><line x1="3" y1="18" x2="3.01" y2="18" />
-                  </svg>
-                </span>
-
-                {/* Thumbnail + Título */}
-                <span className="flex items-center gap-2 md:gap-3 min-w-0">
-                  <span className="w-11 h-11 md:w-10 md:h-10 rounded bg-surface overflow-hidden flex-shrink-0">
-                    <img
-                      src={item.thumbnail_src}
-                      alt={item.title}
-                      className="w-full h-full object-cover"
-                    />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span
-                      className={`block text-sm font-medium truncate ${
-                        isCurrentTrack ? "text-accent" : "text-foreground"
-                      }`}
-                    >
-                      {item.title}
+                  {/* Thumbnail + Título */}
+                  <span className="flex items-center gap-2 md:gap-3 min-w-0">
+                    <span className="w-11 h-11 md:w-10 md:h-10 rounded bg-surface overflow-hidden flex-shrink-0">
+                      <img src={item.thumbnail_src} alt={item.title} className="w-full h-full object-cover" />
                     </span>
-                    <span className="block text-xs text-text-secondary truncate md:hidden">
-                      {item.uploader.username}
-                      {item.uploader.verified && (
-                        <VerifiedBadge />
-                      )}
+                    <span className="min-w-0 flex-1">
+                      <span className={`block text-sm font-medium truncate ${isCurrentTrack ? "text-accent" : "text-foreground"}`}>
+                        {item.title}
+                      </span>
+                      <span className="block text-xs text-text-secondary truncate md:hidden">
+                        {item.uploader.username}
+                        {item.uploader.verified && <VerifiedBadge />}
+                      </span>
                     </span>
                   </span>
-                </span>
 
-                {/* Canal */}
-                <span className="hidden md:flex items-center text-xs text-text-secondary truncate">
-                  {item.uploader.username}
-                </span>
+                  {/* Canal — solo desktop */}
+                  <span className="hidden md:flex items-center text-xs text-text-secondary truncate">
+                    {item.uploader.username}
+                  </span>
 
-                {/* Vistas */}
-                <span className="hidden md:flex items-center justify-end text-xs text-text-secondary tabular-nums">
-                  {formatViews(item.views)} - {item.duration_text}
-                </span>
-              </button>
+                  {/* Vistas — solo desktop */}
+                  <span className="hidden md:flex items-center justify-end text-xs text-text-secondary tabular-nums">
+                    {formatViews(item.views)} - {item.duration_text}
+                  </span>
+
+                  {/* 3 puntos — solo mobile */}
+                  <span
+                    className="md:hidden flex items-center justify-center text-text-tertiary"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOpenMenuId(openMenuId === item.ID ? null : item.ID);
+                    }}
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                      <circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" />
+                    </svg>
+                  </span>
+                </button>
+
+                {/* Dropdown 3 puntos mobile */}
+                {openMenuId === item.ID && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setOpenMenuId(null)} />
+                    <div className="md:hidden absolute right-2 top-full mt-1 z-50 w-48 bg-player border border-border rounded-xl shadow-2xl overflow-hidden">
+                      <button
+                        className="w-full flex items-center gap-3 px-4 py-3 text-sm text-foreground hover:bg-hover transition-colors cursor-pointer"
+                        onClick={() => { onToggleFavorite(track); setOpenMenuId(null); }}
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24"
+                          fill={isFavorite(item.ID) ? "var(--klarinet-accent)" : "none"}
+                          stroke={isFavorite(item.ID) ? "var(--klarinet-accent)" : "currentColor"}
+                          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                        >
+                          <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z" />
+                        </svg>
+                        {isFavorite(item.ID) ? "Quitar de favoritos" : "Agregar a favoritos"}
+                      </button>
+                      <div className="h-px bg-border mx-3" />
+                      <button
+                        className="w-full flex items-center gap-3 px-4 py-3 text-sm text-foreground hover:bg-hover transition-colors cursor-pointer"
+                        onClick={() => { onAddToPlaylist(track); setOpenMenuId(null); }}
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+                        </svg>
+                        Agregar a playlist
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
             );
           })}
+
+          {/* Skeletons mientras carga música relacionada */}
+          {isLoadingRelated && (
+            <>
+              <div className="flex items-center gap-3 px-3 py-2 mt-2">
+                <div className="w-1 h-4 bg-accent rounded-full" />
+                <span className="text-xs text-text-tertiary animate-pulse">Buscando música similar...</span>
+              </div>
+              {[...Array(6)].map((_, i) => (
+                <div key={i} className="flex items-center gap-3 px-3 py-2 rounded-lg">
+                  <div className="w-11 h-11 rounded bg-surface animate-pulse flex-shrink-0" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-3 bg-surface animate-pulse rounded" style={{ width: `${60 + (i % 3) * 15}%` }} />
+                    <div className="h-2.5 bg-surface animate-pulse rounded w-1/3" />
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
         </div>
       )}
     </div>
